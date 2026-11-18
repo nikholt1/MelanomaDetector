@@ -6,7 +6,7 @@ venv/
 
 # Datasets
 two-digitsData/
-dataset/
+
 
 # Trained models
 models/
