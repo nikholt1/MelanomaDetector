@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# Datasets
+two-digitsData/
+dataset/
+
+# Trained models
+models/
+*.keras
+*.h5
+*.weights.h5
+
+# IDE
+.vscode/
+.idea/
