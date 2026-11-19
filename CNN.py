@@ -1,75 +1,96 @@
+from flask import Flask, request, jsonify
 import tensorflow as tf
 import numpy as np
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Conv2D
-from tensorflow.keras.layers import MaxPool2D
-from tensorflow.keras.layers import Flatten
-from tensorflow.keras.layers import Dense
-from keras.preprocessing import image
-from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.models import load_model
-from matplotlib import pyplot
-from flask import Flask, request, jsonify
-import random
 import tkinter as tk
 from PIL import Image, ImageTk
 from io import BytesIO
 from threading import Thread
 from queue import Queue
 
+app = Flask(__name__)
 
-train_datagen = ImageDataGenerator(
-    rescale=1./255.,
-    shear_range=0.2,
-    zoom_range=0.2,
-    rotation_range=20,
-    width_shift_range=0.2,
-    height_shift_range=0.2
-)
+# Load Keras model once
+model = tf.keras.models.load_model("./model/melanoma_model.keras")
 
-training_set = train_datagen.flow_from_directory(
-   '/content/machine-learning/img/digits/two-digitsData/train',
-   target_size=(28,28),
-   batch_size=32,
-   class_mode='categorical',
-   color_mode='grayscale'
-)
-print(training_set.class_indices)
+# Queue for transferring images from Flask to Tkinter
+image_queue = Queue()
 
-test_set = train_datagen.flow_from_directory(
-   '/content/machine-learning/img/digits/two-digitsData/test',
-   target_size=(28,28),
-   batch_size=32,
-   class_mode='categorical',
-   color_mode='grayscale' 
-)
 
-model = Sequential()
-model.add(Conv2D(filters=5,
-                 kernel_size=3,
-                 activation='relu',
-                 input_shape=[28,28,1])) 
-model.add(MaxPool2D(pool_size=2, strides=2))
-model.add(Flatten())
+@app.route('/cnn/return', methods=['POST'])
+def return_verdict():
 
-model.add(Dense(units=10, activation='relu'))
-model.add(Dense(units=10, activation='relu'))
-model.add(Dense(units=2, activation='softmax')) 
-adam = Adam(learning_rate=0.001)
-model.compile(optimizer=adam, loss='categorical_crossentropy', metrics=['accuracy'])
+    image_bytes = request.get_data()
 
-model.fit(training_set, epochs=1)
+    if not image_bytes:
+        return jsonify({'error': 'No image received'}), 400
 
-model.evaluate(test_set)
+    print(f"Received image: {len(image_bytes)} bytes")
 
-def singlePredict(path):
-  test_image = image.load_img(path,
-                              target_size=[28,28], color_mode='grayscale')
-  test_image = image.img_to_array(test_image)
-  test_image = np.expand_dims(test_image, axis=0)
-  result = model.predict(test_image/255.)
-  print(result)
+    # Send image to Tkinter
+    image_queue.put(image_bytes)
 
-singlePredict('/content/machine-learning/img/digits/two-digitsData/train/2/10016.jpg')
+    # Convert image bytes to PIL image
+    image = Image.open(BytesIO(image_bytes))
 
+    # Preprocess image for CNN
+    image = image.convert("RGB").resize((224, 224))
+    image = tf.keras.utils.img_to_array(image)
+    image = np.expand_dims(image, axis=0)
+    image = image / 255.0
+
+    # Make CNN prediction
+    prediction = float(model.predict(image, verbose=0)[0][0])
+
+    print(f"Malignant score: {prediction:.4f}")
+
+    # Return raw prediction value
+    return jsonify(prediction)
+
+
+# Tkinter window
+def start_gui():
+
+    root = tk.Tk()
+    root.title("CNN Image Scanner")
+    root.geometry("330x450")
+
+    image_label = tk.Label(root)
+    image_label.pack(expand=True)
+
+    def update_image():
+
+        if not image_queue.empty():
+
+            image_bytes = image_queue.get()
+
+            pil_image = Image.open(BytesIO(image_bytes))
+            pil_image.thumbnail((550, 450))
+
+            photo = ImageTk.PhotoImage(pil_image)
+
+            image_label.config(image=photo)
+            image_label.image = photo
+
+            print("Image displayed!")
+
+        root.after(100, update_image)
+
+    update_image()
+    root.mainloop()
+
+
+if __name__ == '__main__':
+
+    server = Thread(
+        target=lambda: app.run(
+            host='0.0.0.0',
+            port=5000,
+            debug=False,
+            use_reloader=False
+        ),
+        daemon=True
+    )
+
+    server.start()
+
+    start_gui()
